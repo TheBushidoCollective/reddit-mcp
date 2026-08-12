@@ -1,0 +1,52 @@
+{
+  "name": "@thebushidocollective/reddit-mcp",
+  "version": "1.0.0",
+  "description": "Reddit MCP server: hosted over HTTP behind a Reddit sign-in, or run locally over stdio",
+  "type": "module",
+  "private": false,
+  "license": "Apache-2.0",
+  "author": {
+    "name": "The Bushido Collective",
+    "url": "https://thebushido.co"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thebushidocollective/reddit-mcp"
+  },
+  "homepage": "https://github.com/thebushidocollective/reddit-mcp",
+  "bin": {
+    "reddit-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/http-entry.js",
+    "dev": "tsx src/http-entry.ts",
+    "dev:stdio": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src test",
+    "format": "biome check --write src test"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^7.11.0",
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "express": "^5.2.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

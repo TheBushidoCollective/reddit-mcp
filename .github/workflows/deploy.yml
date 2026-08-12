@@ -1,0 +1,209 @@
+# Build, push, roll the revision. Deploys run here, never from a workstation.
+#
+# The image is tagged with the commit SHA and Cloud Run is pinned to the resulting
+# DIGEST, so the running revision is provably the merged commit rather than
+# whatever a mutable tag happened to point at when the deploy ran.
+#
+# This workflow never runs terraform. The service's existence and its entire
+# configuration live in jwaldrip/cld under deploy/terraform; this repo owns the
+# code and which revision of it serves.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+# Never cancel a deploy in flight. Cancelling between the push and the rollout
+# leaves an image in the registry that nothing serves; cancelling during the
+# rollout leaves a revision created with traffic still on the old one. A queued
+# run is the cheaper failure.
+concurrency:
+  group: deploy-reddit-mcp
+  cancel-in-progress: false
+
+env:
+  REGION: us-central1
+  PROJECT: waldrip-net
+  SERVICE: reddit-mcp
+  # The service's stable public URL. Terraform owns the service, so this does not
+  # move between deploys, and naming it here keeps the probes below pointed at the
+  # address clients actually use rather than whatever a lookup returns.
+  ENDPOINT: https://reddit-mcp-n5sjtdvmca-uc.a.run.app
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Until the terraform in jwaldrip/cld has created the workload identity pool
+    # and the deployer, this variable is unset and there is no identity to assume.
+    # Skipping cleanly is the documented bootstrap state; failing red here would
+    # read as a broken pipeline instead of an unfinished setup.
+    if: vars.WIF_PROVIDER != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      # Workload identity federation, so there is no service account key to
+      # generate, store, rotate or leak. The runner proves who it is with its own
+      # short-lived OIDC token and GCP decides whether that identity may deploy.
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push
+        id: push
+        run: |
+          set -euo pipefail
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/cld/${SERVICE}"
+          docker build -t "${IMAGE}:${GITHUB_SHA}" .
+          docker push "${IMAGE}:${GITHUB_SHA}"
+
+          # Resolve the tag to the digest it currently points at, and deploy that.
+          # A tag can be moved; a digest cannot, so "what is running" stays
+          # answerable during an incident instead of depending on what someone
+          # pushed over the tag afterwards.
+          DIGEST="$(gcloud artifacts docker images describe \
+            "${IMAGE}:${GITHUB_SHA}" --format='value(image_summary.digest)')"
+          echo "image=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "deploying ${IMAGE}@${DIGEST}"
+
+      - name: Roll the revision
+        run: |
+          set -euo pipefail
+
+          # Terraform in jwaldrip/cld owns this service's existence and all of its
+          # configuration: environment, secret bindings, scaling, IAM. It
+          # deliberately ignores the image field, because otherwise this deploy and
+          # the next apply would each keep reverting the other and the running
+          # revision would depend on which ran last. This step owns exactly one
+          # thing: which revision serves.
+          gcloud run deploy "${SERVICE}" \
+            --image "${{ steps.push.outputs.image }}" \
+            --region "${REGION}" \
+            --project "${PROJECT}" \
+            --quiet
+
+      - name: Verify the endpoint speaks OAuth and refuses anonymous callers
+        run: |
+          set -euo pipefail
+          URL="${ENDPOINT}"
+
+          # The service is invokable by anyone, so the check that matters is that
+          # an anonymous MCP request is refused. A 200 here would mean the Reddit
+          # account behind it is readable and postable by the internet.
+          CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/mcp")"
+          echo "anonymous /mcp: HTTP $CODE"
+          [ "$CODE" = "401" ] || { echo "the endpoint is not refusing anonymous callers"; exit 1; }
+
+          # A 401 on its own is a dead end. The client has to be told where to go
+          # and get a token, or it cannot start the handshake at all: that header
+          # is what turns "denied" into "sign in here".
+          HEADERS="$(curl -s -D - -o /dev/null -X POST "$URL/mcp")"
+          echo "$HEADERS" | grep -qi 'www-authenticate' || {
+            echo "no WWW-Authenticate header; a client cannot discover the auth server"; exit 1; }
+
+          # An invented token must not be accepted, and must not be answered with
+          # anything that looks like progress.
+          CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H 'Authorization: Bearer not-a-real-token' "$URL/mcp")"
+          echo "forged-token /mcp: HTTP $CODE"
+          [ "$CODE" = "401" ] || { echo "a forged token was not refused"; exit 1; }
+
+          # Follow the pointer the header actually gave rather than a path guessed
+          # here. RFC 9728 hangs the document off the resource path
+          # (/.well-known/oauth-protected-resource/mcp), so a hardcoded well-known
+          # path can pass while the pointer clients really follow is broken, or
+          # fail while everything works.
+          RESOURCE_DOC="$(echo "$HEADERS" | tr -d '\r' | sed -n 's/.*resource_metadata="\([^"]*\)".*/\1/p')"
+          [ -n "$RESOURCE_DOC" ] || { echo "the header names no resource metadata"; exit 1; }
+          echo "resource metadata: $RESOURCE_DOC"
+          curl -sf "$RESOURCE_DOC" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("  authorization server:", d["authorization_servers"][0])' || {
+            echo "the advertised resource metadata does not resolve"; exit 1; }
+
+          curl -sf "$URL/.well-known/oauth-authorization-server" \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin); [d[k] for k in ("authorization_endpoint","token_endpoint","registration_endpoint")]; print("  endpoints: ok")' || {
+            echo "authorization server metadata is missing or incomplete"; exit 1; }
+
+          # Dynamic client registration has to be open, because that is how an
+          # agent gets credentials in the first place. Registering is not
+          # authorization: the client still has to send its owner through Reddit.
+          CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/register" \
+            -H 'Content-Type: application/json' \
+            -d '{"client_name":"deploy-probe","redirect_uris":["http://localhost:41234/callback"]}')"
+          echo "dynamic registration: HTTP $CODE"
+          case "$CODE" in 200|201) ;; *) echo "clients cannot register"; exit 1;; esac
+
+          # And the process is actually up, rather than crash-looping behind a gate
+          # that refuses everything including its own health.
+          #
+          # /health, never /healthz: Cloud Run's front end answers that path itself
+          # without ever reaching the container, so a check against it passes
+          # whether or not anything is running behind it.
+          CODE="$(curl -s -o /dev/null -w '%{http_code}' "$URL/health")"
+          echo "health: HTTP $CODE"
+          [ "$CODE" = "200" ] || { echo "the service is not serving"; exit 1; }
+
+      - name: Verify the deployed revision serves
+        run: |
+          set -euo pipefail
+
+          # One describe, parsed properly, because the failures worth catching are
+          # relationships between fields rather than any single value.
+          SVC_JSON="$(gcloud run services describe "$SERVICE" --region "$REGION" \
+            --project "$PROJECT" --format=json)"
+
+          SVC_JSON="$SVC_JSON" python3 <<'PY'
+          import json, os, sys
+
+          # `gcloud run services describe` speaks the v1 Knative surface even for a
+          # service terraform created through the v2 API, so the fields here are the
+          # v1 ones: a top-level `status`, and traffic targets keyed `revisionName`.
+          # The v2 spelling is `trafficStatuses` with `revision`, and mixing the two
+          # is silent: `.get("revision")` on a v1 target returns None and every
+          # healthy rollout gets rejected. Change both names together or neither.
+          doc = json.loads(os.environ["SVC_JSON"])
+          status = doc.get("status")
+          if status is None:
+              sys.exit(f"unexpected describe shape, no status field: {sorted(doc)}")
+
+          created = status.get("latestCreatedRevisionName")
+          ready = status.get("latestReadyRevisionName")
+          traffic = status.get("traffic", [])
+
+          print(f"created: {created}")
+          print(f"ready:   {ready}")
+          for t in traffic:
+              print(f"traffic: {t.get('revisionName')} {t.get('percent')}%")
+
+          problems = []
+
+          # Compare revision names rather than reading the Ready condition:
+          # filter("type:Ready") matches ConfigurationsReady and RoutesReady too, so
+          # it returns three values and any string comparison against it is a coin
+          # flip. This is also the stronger claim, since a revision that failed to
+          # start leaves the previous one serving while every condition still reads
+          # True.
+          if not ready or ready != created:
+              problems.append("the newest revision is not the serving one")
+
+          # Naming the revision matters as much as the percentage. A rollout that
+          # created a healthy new revision and left the traffic on the old one
+          # satisfies "ready == created" and "100%" separately, and is still the
+          # old code answering every request.
+          serving = [t for t in traffic if t.get("percent") == 100]
+          if len(serving) != 1 or serving[0].get("revisionName") != created:
+              problems.append("100% of traffic is not on the revision this run created")
+
+          if problems:
+              sys.exit("; ".join(problems))
+          print("the revision this run created is serving all traffic")
+          PY
