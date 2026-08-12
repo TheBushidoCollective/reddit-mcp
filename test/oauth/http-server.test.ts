@@ -217,6 +217,67 @@ describe('discovery', () => {
     expect(challenge).toContain('resource_metadata=');
   });
 
+  // The SDK advertises scopesSupported in metadata but does not enforce it, so
+  // an unchecked authorize writes whatever the client asked for into the
+  // transaction and echoes it back in the token response. Naming a scope here
+  // does not obtain it from Reddit, so that would be a lie to the client, and
+  // the refresh grant only narrows against the original set.
+  test('a scope this server cannot deliver is refused at /authorize', async () => {
+    const { clientId } = await registerClient();
+
+    const authorize = new URL('/authorize', origin);
+    authorize.searchParams.set('client_id', clientId);
+    authorize.searchParams.set('redirect_uri', AGENT_CALLBACK);
+    authorize.searchParams.set('response_type', 'code');
+    authorize.searchParams.set('code_challenge', 'x'.repeat(43));
+    authorize.searchParams.set('code_challenge_method', 'S256');
+    authorize.searchParams.set('scope', 'identity submit modconfig');
+
+    const response = await fetch(authorize, { redirect: 'manual' });
+
+    // A 302 is correct, but only back to the client. Once client_id and
+    // redirect_uri check out, OAuth 2.1 returns the error to the client rather
+    // than rendering it, so the thing to assert is the destination and the
+    // error code, never the bare status.
+    expect(response.status).toBe(302);
+
+    const location = new URL(String(response.headers.get('location')));
+    expect(location.host).not.toBe('www.reddit.com');
+    expect(`${location.origin}${location.pathname}`).toBe(AGENT_CALLBACK);
+    expect(location.searchParams.get('error')).toBe('invalid_scope');
+
+    // And it names the offending scope, so the agent can fix its request
+    // instead of retrying the same one.
+    expect(location.searchParams.get('error_description') ?? '').toContain(
+      'submit'
+    );
+  });
+
+  test('the supported scopes are the ones actually asked of Reddit', async () => {
+    const { clientId } = await registerClient();
+
+    const authorize = new URL('/authorize', origin);
+    authorize.searchParams.set('client_id', clientId);
+    authorize.searchParams.set('redirect_uri', AGENT_CALLBACK);
+    authorize.searchParams.set('response_type', 'code');
+    authorize.searchParams.set('code_challenge', 'y'.repeat(43));
+    authorize.searchParams.set('code_challenge_method', 'S256');
+    authorize.searchParams.set('scope', 'identity history');
+
+    const response = await fetch(authorize, { redirect: 'manual' });
+    expect(response.status).toBe(302);
+
+    const upstream = new URL(String(response.headers.get('location')));
+    expect(upstream.host).toBe('www.reddit.com');
+
+    const metadata = await fetch(
+      `${origin}/.well-known/oauth-authorization-server`
+    ).then((r) => r.json() as Promise<{ scopes_supported?: string[] }>);
+    for (const scope of metadata.scopes_supported ?? []) {
+      expect(upstream.searchParams.get('scope')?.split(' ')).toContain(scope);
+    }
+  });
+
   test('the authorization server metadata names every endpoint it serves', async () => {
     const response = await fetch(
       `${origin}/.well-known/oauth-authorization-server`

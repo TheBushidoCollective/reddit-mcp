@@ -26,6 +26,7 @@ import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/serv
 import {
   InvalidGrantError,
   InvalidRequestError,
+  InvalidScopeError,
   InvalidTokenError,
   ServerError,
 } from '@modelcontextprotocol/sdk/server/auth/errors.js';
@@ -138,12 +139,42 @@ export class RedditBridgeProvider implements OAuthServerProvider {
         redirectUri: params.redirectUri,
         state: params.state,
         codeChallenge: params.codeChallenge,
-        scopes: params.scopes?.length ? params.scopes : SUPPORTED_SCOPES,
+        scopes: this.grantableScopes(params.scopes),
         resource: params.resource?.href,
       },
       TRANSACTION_TTL
     );
     res.redirect(302, destination);
+  }
+
+  /**
+   * Narrows a requested scope set to what this server can actually deliver.
+   *
+   * The SDK only advertises `scopesSupported` in metadata; it does not enforce
+   * it, so an unchecked request writes whatever the client asked for straight
+   * into the transaction and out again in the token response. That is a lie
+   * rather than a privilege: these scopes are the ones we ask Reddit for, and
+   * naming one here does not obtain it. It becomes a real hole the moment any
+   * route starts gating on scope, and the refresh grant only narrows against
+   * the original set, so an inflated original propagates for the life of the
+   * grant.
+   *
+   * Unsupported scopes are refused rather than silently dropped. A client that
+   * asked for something it will not get should be told at the point it asked,
+   * not discover the gap on a later call it cannot explain.
+   */
+  private grantableScopes(requested: string[] | undefined): string[] {
+    if (!requested?.length) return SUPPORTED_SCOPES;
+
+    const unsupported = requested.filter(
+      (scope) => !SUPPORTED_SCOPES.includes(scope)
+    );
+    if (unsupported.length) {
+      throw new InvalidScopeError(
+        `Unsupported scope: ${unsupported.join(', ')}. This server issues only: ${SUPPORTED_SCOPES.join(', ')}.`
+      );
+    }
+    return requested;
   }
 
   /**
