@@ -217,14 +217,18 @@ them and `deploy/reddit-secrets.sh` creates them, for the ordering reason above.
 First bring-up runs in this order, and the order is load bearing:
 
 1. `cld/deploy/bootstrap.sh`, which creates the `reddit-mcp-github` workload
-   identity pool and provider and the deployer this repo authenticates as. It
+   identity pool and provider and sets the two repository variables below. It
    cannot run in CI, because a pipeline cannot create the identity it
-   authenticates with.
+   authenticates with. The deployer account itself is not created here: it and
+   every role on it are terraform, so they sit next to the rest of what that
+   account may do.
 2. `cld/deploy/reddit-secrets.sh`, which creates the three secret containers and
    their first versions. Before the apply, not after.
-3. Merge the cld pull request. That apply creates the service, on a placeholder
+3. Merge the cld pull request. That apply creates the deployer, grants it
+   federation from the pool in step 1, and creates the service on a placeholder
    image.
-4. Set `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` on this repository.
+4. Confirm `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` are set on this repository.
+   Step 1 sets them; this is the check that the deploy job will not skip.
 5. Merge here. The deploy workflow builds the real image, rolls it, and probes
    it.
 6. Merge the han pull request, which points the plugin at the endpoint.
