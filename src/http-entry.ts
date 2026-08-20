@@ -1,14 +1,11 @@
 /**
  * Cloud Run entry point.
  *
- * Configuration is read once, here, and every value that has no safe default
- * is required rather than defaulted. Each of these fails in a different quiet
- * way if it is missing: a wrong public URL means clients discover endpoints
- * they cannot reach, no database name means OAuth state has nowhere to live
- * and every cold start asks the person to sign in again, and no session secret
- * means authorization codes and stored Reddit grants cannot be sealed at all.
- * None of them get a default, and the process refuses to start rather than
- * start wrong.
+ * Configuration is read once, here. Values required to build the service have
+ * no defaults, so the process refuses to start when one is missing. The
+ * allowed username is also read here, but its absence is carried into the
+ * grant layer on purpose: every sign-in is then refused with an OAuth error
+ * that explains the account boundary.
  */
 
 import { createHttpServer, VERSION } from './http-server.js';

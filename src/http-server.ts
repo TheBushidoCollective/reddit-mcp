@@ -9,9 +9,9 @@
  * "session not found" instead of an answer. Stateless costs server-initiated
  * notifications, which none of these tools send.
  *
- * A fresh McpServer per request follows from that, and from multi-tenancy: two
- * requests in flight belong to two different Reddit accounts, and a server
- * built once at startup would have to hold one of them.
+ * A fresh McpServer per request follows from that. Each request builds its
+ * Reddit client from the grant named by its bearer, then discards it instead
+ * of holding Reddit credentials for the lifetime of the app.
  */
 
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';

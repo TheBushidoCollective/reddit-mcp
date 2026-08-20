@@ -68,12 +68,10 @@ async function finishSignIn(
     fetchImpl: redditStub(identity),
   };
   const grant = new RedditGrant(grantConfig);
-  const result = await completeRedditSignIn(
-    grant,
-    stores,
-    SEALING_KEY,
-    { state: 'parked-transaction', code: 'reddit-code' }
-  );
+  const result = await completeRedditSignIn(grant, stores, SEALING_KEY, {
+    state: 'parked-transaction',
+    code: 'reddit-code',
+  });
 
   return { result, stores, writes, creations };
 }
@@ -85,10 +83,7 @@ function redirectFrom(result: CallbackResult): URL {
   return new URL(result.redirectTo);
 }
 
-function expectAccessDenied(
-  result: CallbackResult,
-  description: string
-): void {
+function expectAccessDenied(result: CallbackResult, description: string): void {
   const redirect = redirectFrom(result);
   expect(redirect.searchParams.get('error')).toBe('access_denied');
   expect(redirect.searchParams.get('error_description')).toBe(description);
@@ -155,17 +150,20 @@ describe('the hosted Reddit account boundary', () => {
   test.each([
     { label: 'unset', allowedUsername: undefined },
     { label: 'empty', allowedUsername: '' },
-  ])('$label configuration denies every username', async ({ allowedUsername }) => {
-    const { result, writes, creations } = await finishSignIn(
-      'some_redditor',
-      allowedUsername
-    );
+  ])(
+    '$label configuration denies every username',
+    async ({ allowedUsername }) => {
+      const { result, writes, creations } = await finishSignIn(
+        'some_redditor',
+        allowedUsername
+      );
 
-    expectAccessDenied(
-      result,
-      'This server is configured for a single Reddit account, but no account is configured.'
-    );
-    expect(writes).not.toHaveBeenCalled();
-    expect(creations).not.toHaveBeenCalled();
-  });
+      expectAccessDenied(
+        result,
+        'This server is configured for a single Reddit account, but no account is configured.'
+      );
+      expect(writes).not.toHaveBeenCalled();
+      expect(creations).not.toHaveBeenCalled();
+    }
+  );
 });

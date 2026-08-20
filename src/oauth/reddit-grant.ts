@@ -52,9 +52,10 @@ export interface RedditTokens {
 }
 
 /**
- * Raised for anything Reddit refuses. The message is written for a person
- * reading a redirect, and never carries an upstream response body: a failed
- * token exchange echoes back the grant that was submitted.
+ * Raised when Reddit or the local account boundary refuses a grant. The
+ * message is written for a person reading a redirect, and never carries an
+ * upstream response body: a failed token exchange echoes back the grant that
+ * was submitted.
  */
 export class RedditGrantError extends Error {}
 
