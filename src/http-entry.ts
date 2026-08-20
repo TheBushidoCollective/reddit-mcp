@@ -32,6 +32,7 @@ const projectId = required('GOOGLE_CLOUD_PROJECT');
 const databaseId = required('FIRESTORE_DATABASE');
 const redditClientId = required('REDDIT_CLIENT_ID');
 const redditClientSecret = required('REDDIT_CLIENT_SECRET');
+const redditAllowedUsername = process.env.REDDIT_ALLOWED_USERNAME?.trim();
 const sessionSecret = required('MCP_SESSION_SECRET');
 
 const port = Number(process.env.PORT?.trim() || DEFAULT_PORT);
@@ -47,6 +48,7 @@ const app = createHttpServer({
   publicUrl,
   redditClientId,
   redditClientSecret,
+  redditAllowedUsername,
   sealingKey,
   stores,
 });

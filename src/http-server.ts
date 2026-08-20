@@ -38,6 +38,8 @@ export interface HttpServerConfig {
   publicUrl: string;
   redditClientId: string;
   redditClientSecret: string;
+  /** The only Reddit username allowed to finish hosted sign-in. */
+  redditAllowedUsername: string | undefined;
   sealingKey: Buffer;
   stores: OAuthStores;
   userAgent?: string;
@@ -53,6 +55,7 @@ export function createHttpServer(config: HttpServerConfig): Express {
     publicUrl,
     clientId: config.redditClientId,
     clientSecret: config.redditClientSecret,
+    allowedUsername: config.redditAllowedUsername,
     userAgent,
     fetchImpl: config.fetchImpl,
   });

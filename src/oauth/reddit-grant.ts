@@ -39,6 +39,8 @@ export interface RedditGrantConfig {
   publicUrl: string;
   clientId: string;
   clientSecret: string;
+  /** Only this Reddit username may finish hosted sign-in. */
+  allowedUsername: string | undefined;
   userAgent: string;
   /** Swappable so the callback can be tested without reaching Reddit. */
   fetchImpl?: typeof fetch;
@@ -58,9 +60,17 @@ export class RedditGrantError extends Error {}
 
 export class RedditGrant {
   private readonly fetchImpl: typeof fetch;
+  private readonly allowedUsername: string | null;
 
   constructor(private readonly config: RedditGrantConfig) {
     this.fetchImpl = config.fetchImpl ?? fetch;
+    const allowedUsername = config.allowedUsername
+      ?.trim()
+      .replace(/^\/?u\//i, '')
+      .trim();
+    this.allowedUsername = allowedUsername
+      ? allowedUsername.toLowerCase()
+      : null;
   }
 
   /**
@@ -168,6 +178,20 @@ export class RedditGrant {
     return name;
   }
 
+  /** Refuses every identity except the one this hosted server owns. */
+  assertAllowedUsername(username: string): void {
+    if (!this.allowedUsername) {
+      throw new RedditGrantError(
+        'This server is configured for a single Reddit account, but no account is configured.'
+      );
+    }
+    if (username.toLowerCase() !== this.allowedUsername) {
+      throw new RedditGrantError(
+        'This server is configured for a different Reddit account.'
+      );
+    }
+  }
+
   private basicAuth(): string {
     return Buffer.from(
       `${this.config.clientId}:${this.config.clientSecret}`
@@ -265,6 +289,7 @@ export async function completeRedditSignIn(
   try {
     const tokens = await grant.exchangeCode(query.code);
     username = await grant.identity(tokens.accessToken);
+    grant.assertAllowedUsername(username);
     refreshToken = tokens.refreshToken;
   } catch (error) {
     const description =
