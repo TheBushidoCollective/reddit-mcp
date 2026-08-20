@@ -17,8 +17,8 @@
  *
  * Registration is open at /register, and that is correct rather than an
  * oversight: it is how an agent gets credentials at all, and holding a client
- * id proves nothing. The gate is the Reddit sign-in further down, which no
- * registration can skip.
+ * id proves nothing. The gate is the Reddit sign-in and the configured account
+ * check further down, which no registration can skip.
  */
 
 import { randomBytes } from 'node:crypto';

@@ -66,6 +66,7 @@ beforeAll(async () => {
     publicUrl: origin,
     redditClientId: 'reddit-app-id',
     redditClientSecret: 'reddit-app-secret',
+    redditAllowedUsername: 'some_redditor',
     sealingKey: deriveSealingKey('a-test-session-secret'),
     stores: new OAuthStores(
       new MemoryDocumentStore(),

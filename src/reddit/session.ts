@@ -1,16 +1,15 @@
 /**
- * Per-request Reddit clients for the hosted, multi-tenant server.
+ * Per-request Reddit clients for the hosted server.
  *
  * The stdio path resolves one credential set from the environment at startup
  * and reuses a single client for the whole process. The hosted path cannot do
- * that: every request belongs to a different Reddit account, so the client has
- * to be built from that request's session and discarded with it.
+ * that: each bearer names a stored Reddit grant, so the client has to be built
+ * from that request's session and discarded with it.
  *
  * Nothing in this file reads process.env, and that is the point. The server's
  * own REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET are ambient in the container,
- * so any environment read here would be a path by which one caller's request
- * could be served under credentials that are not theirs. Every value arrives
- * in the argument.
+ * so an environment read here could serve a request under credentials its
+ * bearer did not name. Every value arrives in the argument.
  */
 
 import type { RedditCredentials } from './auth.js';
