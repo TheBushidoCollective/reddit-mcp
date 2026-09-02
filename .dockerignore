@@ -1,0 +1,15 @@
+# A host node_modules would be copied over the one `npm ci` just resolved, and a
+# host dist over the one `tsc` just produced, which is how a stale local build
+# ends up deployed while the logs say it was built from source.
+node_modules
+dist
+
+# Never needed to build the image, and .env in particular must not be in the
+# build context at all: anything there is one careless COPY away from being
+# committed into a layer.
+.git
+.github
+test
+.env
+.env.*
+*.log

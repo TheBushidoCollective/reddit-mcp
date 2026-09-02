@@ -2,11 +2,12 @@
 
 An MCP server for Reddit that runs two ways.
 
-Hosted, it sits behind an OAuth 2.1 authorization server of its own, and the way
-you prove you are allowed to use it is by signing in to Reddit. The agent gets a
-token this server minted; Reddit gets a normal authorization code grant from a
-human in a browser. No Reddit credential is ever pasted into a config file, and
-none is shared between users.
+Hosted, it sits behind an OAuth 2.1 authorization server of its own and accepts
+one configured Reddit account. The human signs in to Reddit, and the grant
+completes only when the returned username matches `REDDIT_ALLOWED_USERNAME`.
+The agent gets a token this server minted; Reddit gets a normal authorization
+code grant from a human in a browser. A different account is refused before its
+refresh token is stored or this server's authorization code is minted.
 
 Local, it is an ordinary stdio MCP server that reads Reddit credentials from the
 environment. That path is for development and for anyone who would rather run it
@@ -36,14 +37,15 @@ https://reddit-mcp-n5sjtdvmca-uc.a.run.app
 | `GET /callback/reddit` | Where Reddit sends the human back. |
 | `POST /revoke` | Token revocation. |
 
-Registering is not authorization. Any client may register; it still has to send
-its owner through Reddit before it gets a token that `/mcp` will accept.
+Registering is not authorization. Any client may register, but registration
+does not select a Reddit account or grant a token. Only a Reddit sign-in that
+matches the configured username can finish the grant; every other identity gets
+`access_denied`.
 
-## Connecting through the han plugin
+## Connecting to the hosted endpoint
 
-The plugin is a pointer and nothing else. In
-[TheBushidoCollective/han](https://github.com/TheBushidoCollective/han),
-`plugins/services/reddit/.mcp.json` is the whole of it:
+The hosted endpoint is for the operator account named by
+`REDDIT_ALLOWED_USERNAME`. Point an MCP client at:
 
 ```json
 {
@@ -56,23 +58,11 @@ The plugin is a pointer and nothing else. In
 }
 ```
 
-Install it with:
-
-```sh
-han plugin install reddit
-```
-
-or, without han's CLI:
-
-```sh
-claude plugin marketplace add thebushidocollective/han
-claude plugin install reddit@han
-```
-
 The first tool call is refused with a 401 and a `WWW-Authenticate` header naming
-where to go. The client follows it, registers itself, opens Reddit's consent
-screen in a browser, and comes back holding a token. After that it is silent:
-refresh happens without asking again.
+where to go. The client follows it, registers itself, and opens Reddit's consent
+screen in a browser. A matching account comes back holding a token and refreshes
+without another prompt. A different account gets `access_denied` and no grant is
+stored. Other operators should run their own copy over stdio.
 
 ## Environment
 
@@ -87,6 +77,7 @@ configure by hand.
 | `FIRESTORE_DATABASE` | `monarch-oauth` | Where OAuth state lives, because this runs on a service that scales to zero and in-memory state would not survive a cold start. The name is historical: the database is shared with monarch-mcp, and this server prefixes its collections `reddit_` so the two cannot collide. |
 | `REDDIT_CLIENT_ID` | Secret Manager `reddit-oauth-client-id` | The Reddit app this server authenticates users against. |
 | `REDDIT_CLIENT_SECRET` | Secret Manager `reddit-oauth-client-secret` | Same app's secret, used only server side in the code exchange. |
+| `REDDIT_ALLOWED_USERNAME` | Operator's Reddit username, without a `u/` prefix | The single account allowed to finish hosted sign-in. The comparison is case-insensitive, and a leading `u/` or `/u/` is ignored defensively. If this value is unset or empty, every sign-in ends with `access_denied` and no grant is stored. |
 | `MCP_SESSION_SECRET` | Secret Manager `reddit-mcp-session-secret` | Signs the artifacts this server issues. Rotating it invalidates every outstanding token, which is the point. |
 | `PORT` | injected | Cloud Run sets it. Locally it defaults to 8080. |
 
@@ -149,8 +140,9 @@ serve without them.
 At <https://www.reddit.com/prefs/apps>, create another app of type **web app**.
 
 Not `script`, and not `installed app`. The hosted server runs the authorization
-code flow on behalf of whichever human signs in, which needs a client secret and
-a registered redirect URI, and `web app` is the only type that is both.
+code flow for its configured account in a human browser. That needs a client
+secret and a registered redirect URI, and `web app` is the only type that has
+both.
 
 The redirect URI has to be exactly:
 
@@ -217,14 +209,18 @@ them and `deploy/reddit-secrets.sh` creates them, for the ordering reason above.
 First bring-up runs in this order, and the order is load bearing:
 
 1. `cld/deploy/bootstrap.sh`, which creates the `reddit-mcp-github` workload
-   identity pool and provider and the deployer this repo authenticates as. It
+   identity pool and provider and sets the two repository variables below. It
    cannot run in CI, because a pipeline cannot create the identity it
-   authenticates with.
+   authenticates with. The deployer account itself is not created here: it and
+   every role on it are terraform, so they sit next to the rest of what that
+   account may do.
 2. `cld/deploy/reddit-secrets.sh`, which creates the three secret containers and
    their first versions. Before the apply, not after.
-3. Merge the cld pull request. That apply creates the service, on a placeholder
+3. Merge the cld pull request. That apply creates the deployer, grants it
+   federation from the pool in step 1, and creates the service on a placeholder
    image.
-4. Set `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` on this repository.
+4. Confirm `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` are set on this repository.
+   Step 1 sets them; this is the check that the deploy job will not skip.
 5. Merge here. The deploy workflow builds the real image, rolls it, and probes
    it.
 6. Merge the han pull request, which points the plugin at the endpoint.

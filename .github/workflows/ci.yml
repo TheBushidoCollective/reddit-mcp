@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read only, and no id-token. This job never needs to reach GCP: everything it
+# checks is answerable from the checkout, so it stays runnable on a fork's pull
+# request without handing that fork an identity.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # `npm ci` rather than `npm install`, so the lockfile is authoritative and a
+      # transitive dependency cannot drift between what a pull request tested and
+      # what the deploy builds into the image.
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # `tsc --noEmit` is not covered by the tests: vitest transpiles rather than
+      # type checks, so a type error reaches the Docker build and fails there
+      # instead of here.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
