@@ -30,6 +30,10 @@ env:
   REGION: us-central1
   PROJECT: waldrip-net
   SERVICE: reddit-mcp
+  # The identity the container runs as. Terraform in jwaldrip/cld grants the
+  # deployer actAs on this account only. Without --service-account below, Cloud Run
+  # reverts the revision to the default compute account.
+  RUNTIME_SA: reddit-mcp-run@waldrip-net.iam.gserviceaccount.com
   # The service's stable public URL. Terraform owns the service, so this does not
   # move between deploys, and naming it here keeps the probes below pointed at the
   # address clients actually use rather than whatever a lookup returns.
@@ -90,6 +94,7 @@ jobs:
             --image "${{ steps.push.outputs.image }}" \
             --region "${REGION}" \
             --project "${PROJECT}" \
+            --service-account "${RUNTIME_SA}" \
             --quiet
 
       - name: Verify the endpoint speaks OAuth and refuses anonymous callers
